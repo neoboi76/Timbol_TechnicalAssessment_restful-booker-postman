@@ -1,0 +1,56 @@
+name: API tests (Newman)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'API under test (defaults to the BASE_URL repository variable, then the public Restful-Booker instance)'
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Passed through env so the value is never interpolated into the shell command.
+      API_BASE_URL: ${{ inputs.base_url || vars.BASE_URL || 'https://restful-booker.herokuapp.com' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Environment values are overridden at run time; credentials are not hard-coded in the workflow.
+      # --timeout-request is generous because the public instance can cold-start slowly.
+      - name: Run collection
+        run: >
+          npx newman run restful-booker.postman_collection.json
+          -e restful-booker.postman_environment.json
+          --env-var "baseUrl=$API_BASE_URL"
+          --timeout-request 60000
+          --reporters cli,junit
+          --reporter-junit-export results/newman.xml
+
+      - name: Upload results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-results
+          path: results/
+          retention-days: 14
